@@ -22,6 +22,10 @@ try
 
     app.Run();
 }
+catch (HostAbortedException)
+{
+    Log.Information("shut down triggered by entity framwork tool");
+}
 catch (Exception ex)
 {
     Log.Fatal(ex, "Unhandled exception");

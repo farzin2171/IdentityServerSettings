@@ -1,6 +1,9 @@
 using Duende.IdentityServer;
+using Duende.IdentityServer.EntityFramework.DbContexts;
+using Duende.IdentityServer.EntityFramework.Mappers;
 using IdentityServer_V2;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 namespace IdentityServer_V2
@@ -10,7 +13,8 @@ namespace IdentityServer_V2
         public static WebApplication ConfigureServices(this WebApplicationBuilder builder)
         {
             builder.Services.AddRazorPages();
-
+            var migraionsAssembly = typeof(Program).Assembly.GetName().Name;
+            const string connectionString = @"Server=localhost:5432;User Id=postgr;password=postgrespw;Database=IdentityServer";
             var isBuilder = builder.Services.AddIdentityServer(options =>
                 {
                     options.Events.RaiseErrorEvents = true;
@@ -21,12 +25,17 @@ namespace IdentityServer_V2
                     // see https://docs.duendesoftware.com/identityserver/v6/fundamentals/resources/
                     options.EmitStaticAudienceClaim = true;
                 })
+                .AddConfigurationStore(option =>
+                {
+                    option.ConfigureDbContext = b => b.UseNpgsql(connectionString,
+                        sql => sql.MigrationsAssembly(migraionsAssembly));
+                })
+                .AddOperationalStore(option =>
+                {
+                    option.ConfigureDbContext = b => b.UseNpgsql(connectionString,
+                        sql => sql.MigrationsAssembly(migraionsAssembly));
+                })
                 .AddTestUsers(TestUsers.Users);
-
-            // in-memory, code config
-            isBuilder.AddInMemoryIdentityResources(Config.IdentityResources);
-            isBuilder.AddInMemoryApiScopes(Config.ApiScopes);
-            isBuilder.AddInMemoryClients(Config.Clients);
 
 
             // if you want to use server-side sessions: https://blog.duendesoftware.com/posts/20220406_session_management/
@@ -66,6 +75,8 @@ namespace IdentityServer_V2
                 app.UseDeveloperExceptionPage();
             }
 
+            InitilizeDatabase(app);
+
             app.UseStaticFiles();
             app.UseRouting();
             app.UseIdentityServer();
@@ -75,6 +86,46 @@ namespace IdentityServer_V2
                 .RequireAuthorization();
 
             return app;
+        }
+
+        private static void InitilizeDatabase(IApplicationBuilder app)
+        {
+            using(var serviceScope = app.ApplicationServices.GetService<IServiceScopeFactory>()!.CreateScope())
+            {
+                serviceScope.ServiceProvider.GetRequiredService<PersistedGrantDbContext>().Database.Migrate();
+                var context = serviceScope.ServiceProvider.GetRequiredService<ConfigurationDbContext>();
+                context.Database.Migrate();
+
+                if (!context.Clients.Any())
+                {
+                    foreach (var client in Config.Clients)
+                    {
+                        context.Clients.Add(client.ToEntity());
+                    }
+                    context.SaveChanges();
+                }
+
+                if (!context.IdentityResources.Any())
+                {
+                    foreach(var resource in Config.IdentityResources)
+                    {
+                        context.IdentityResources.Add(resource.ToEntity());
+                    }
+                    context.SaveChanges();
+                }
+
+                if(!context.ApiScopes.Any())
+                {
+                    foreach( var api in Config.ApiScopes)
+                    {
+                        context.ApiScopes.Add(api.ToEntity());
+                    }
+                    context.SaveChanges();
+                }
+
+
+
+            }
         }
     }
 }
